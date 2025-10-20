@@ -1,315 +1,111 @@
-﻿using OpenCvSharp;
-using OpenCvSharp.Extensions; // For BitmapConverter
-using OpenCvSharp.Face;//contains the face recognition algorithms
-using System;
-using System;
-using System.Collections.Generic;
-using System.Collections.Generic;
+﻿using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
+using OpenCvSharp;
 using System.Diagnostics;
-using System.Drawing;         // For System.Drawing.Size if needed
-using System.IO;//for file folders operations
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Size = OpenCvSharp.Size; // This tells C# to use OpenCV's Size by default
 
-//We will use OpenCV's CascadeClassifier
+
 
 namespace EmployeeAttendanceSystem
 {
     internal class FaceRecognitionService : IDisposable
     {
         //class variables
-        private readonly LBPHFaceRecognizer _recognizer;
+        
+        private readonly InferenceSession _session;
         private readonly Dictionary<int, string> _labelMap;//maps numeric labels to person names
-
+        private readonly Dictionary<int, List<float[]>> _faceEmbeddings; //Store embeddings per person
+        
         private bool _isDisposed;
 
 
-        private List<Mat> _trainingImages = new List<Mat>();
-        private List<int> _trainingLabels = new List<int>();
-
-        public bool NeedsTraining => _trainingImages.Count == 0 || _recognizer == null;
-
-        //add thecasCade classifier
-        private CascadeClassifier _faceCascade;
-
         // 2. Constructor
-        public FaceRecognitionService()
+        public FaceRecognitionService(string modelPath)
         {
-            try
-            {
-                _recognizer = LBPHFaceRecognizer.Create(
-                radius: 1,
-                neighbors: 8,
-                gridX: 8,
-                gridY: 8,
-                threshold: double.PositiveInfinity);
-
-                //lets inicialize face detector
-                string cascadePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
-                                                    "haarcascade_frontalface_default.xml");
-                if (!File.Exists(cascadePath))
-                    throw new FileNotFoundException("Haar cascade file missing");
-                _faceCascade = new CascadeClassifier(cascadePath);
-            }
-            catch(Exception ex)
-            {
-                MessageBox.Show($"Initialization failed: {ex.Message}");
-                throw; // Important for DI containers
-            }
             
+            //load the ONNX model from right path:
+            _session = new InferenceSession(modelPath);
+
+            //lets see the input and output names:
+            Debug.WriteLine("Input Names:");
+            foreach(var input in _session.InputMetadata)
+            {
+                Debug.WriteLine($"  - {input.Key} (Shape: {string.Join(",", input.Value.Dimensions)})");
+            }
+            Debug.WriteLine("Output names:");
+            foreach (var output in _session.OutputMetadata)
+            {
+                Debug.WriteLine($"  - {output.Key} (Shape: {string.Join(",", output.Value.Dimensions)})");
+            }
+            Debug.WriteLine("==============================");
+
+            // Initialize data structures
             _labelMap = new Dictionary<int, string>();
-
-            //shoud I inicialize here the _trainingImages and _trainingLabels?
+            _faceEmbeddings = new Dictionary<int, List<float[]>>();
 
         }
 
-
-
-        public void SaveModel(string modelPath)
+        public void RegisterFacesFromDataset(string datasetPath)
         {
-            _recognizer.Write(modelPath);
-            File.WriteAllText(modelPath + ".labels",
-                string.Join(",", _labelMap.Select(x => $"{x.Key}:{x.Value}")));
-        }
-
-        public bool LoadModel(string modelPath)
-        {
-            if (!File.Exists(modelPath)) return false;//model does not exist
-
-            _recognizer.Read(modelPath);
-            var labelData = File.ReadAllText(modelPath + ".labels");
+            Debug.WriteLine("==============================");
+            Debug.WriteLine("=Initializing the embeeding fase==");
 
             _labelMap.Clear();
-            foreach (var item in labelData.Split(','))
-            {
-                var parts = item.Split(':');
-                if (parts.Length == 2 && int.TryParse(parts[0], out int key))
-                {
-                    _labelMap[key] = parts[1];
-                }
-            }
-
-            return true;
-        }
-
-
-        //add a method to Preprocess Images:
-
-        private Mat PreprocessImage(Mat input)
-        {
-            // 1. Convert to grayscale
-            Mat gray = new Mat();
-            Cv2.CvtColor(input, gray, ColorConversionCodes.BGR2GRAY);
-
-            // 2. Face detection (optional but recommended)
-            try
-            {
-                using (var faceCascade = new CascadeClassifier("haarcascade_frontalface_default.xml"))
-                {
-                    Rect[] faces = faceCascade.DetectMultiScale(gray);
-                    if (faces.Length > 0)
-                    {
-                        // Crop to the largest face
-                        Rect faceRect = faces.OrderByDescending(f => f.Width * f.Height).First();
-                        gray = new Mat(gray, faceRect);
-                    }
-                }
-            }
-            catch
-            {
-                // Continue without face detection if cascade fails
-            }
-
-            // 3. Resize to standard dimensions
-            Mat resized = new Mat();
-            Cv2.Resize(gray, resized, new OpenCvSharp.Size(100, 100));
-
-            // 4. Histogram equalization
-            Mat equalized = new Mat();
-            Cv2.EqualizeHist(resized, equalized);
-
-            // 5. Noise reduction
-            Mat denoised = new Mat();
-            Cv2.GaussianBlur(equalized, denoised, new OpenCvSharp.Size(3, 3), 0);
-
-            // 6. Contrast enhancement (optional)
-            using (var clahe = Cv2.CreateCLAHE(2.0, new OpenCvSharp.Size(8, 8)))
-            {
-                Mat enhanced = new Mat();
-                clahe.Apply(denoised, enhanced);
-                return enhanced.Clone();
-            }
-
-            // If not using CLAHE, return denoised
-            return denoised.Clone();
-        }
-
-        //First we will check if the dataSet is valid:
-        
-        //1 - Method that finds faces on image
-        public Rect? DetectFace(Mat image)
-        {
-            //use Cascade Classifier, converts to grayscale the images
-            using (var gray = image.CvtColor(ColorConversionCodes.BGR2GRAY))
-            {
-                // Detect faces
-                var faces = _faceCascade.DetectMultiScale(
-                    gray,
-                    scaleFactor: 1.1,
-                    minNeighbors: 5,
-                    minSize: new Size(60, 60));
-
-                //returns rectangle around largest face or null(if not found)
-                return faces.Length > 0 ? (Rect?)faces[0] : null;
-            }
-        }
-
-        //2 - returns the process face, without noise and resized
-        public Mat PreprocessFace(Mat image, Rect face)
-        {
-            // 1. Crop to face region
-            using (var faceImg = new Mat(image, face))
-            // 2. Convert to grayscale
-            using (var gray = faceImg.CvtColor(ColorConversionCodes.BGR2GRAY))
-            {
-                // 3. Resize to standard size
-                var resized = new Mat();
-                Cv2.Resize(gray, resized, new Size(100, 100));
-
-                // 4. Histogram equalization
-                Cv2.EqualizeHist(resized, resized);
-
-                // 5. Noise reduction
-                Cv2.GaussianBlur(resized, resized, new Size(3, 3), 0);
-
-                // 6. Return processed face
-                return resized.Clone();
-            }
-        }
-
-        //3- DataSetValidation
-        public void TestDetectionOnDataset(string datasetPath)
-        {
-            // Add this at the start of the method
-            string logPath = Path.Combine(Application.StartupPath, "face_detection_log.txt");
-            File.WriteAllText(logPath, $"Face Detection Log - {DateTime.Now}\n\n");
-            foreach (var folder in Directory.GetDirectories(datasetPath))
-            {
-                foreach (var file in Directory.GetFiles(folder)) // Test first 3 images
-                {
-                    using (var image = new Mat(file))
-                    {
-                        var faceRect = DetectFace(image);
-                        if (faceRect.HasValue)
-                        {
-                            //File.AppendAllText(logPath, $"Detected face in: {file}\n");
-                            
-                              using (var face = new Mat(image, faceRect.Value))
-                            {
-                                Cv2.ImShow("Detected Face", face);
-                                Cv2.WaitKey(2000); // show the image for 2 seconds
-                            }
-                              
-                             
-
-                        }
-                        else
-                        {
-                            //string message = $"No face in: {file}";
-                            //Debug.WriteLine(message);
-                            //File.AppendAllText(logPath, message + "\n");
-                            //Debug.WriteLine($"No face in: {file}");
-                        }
-                    }
-                }
-            }
-            Cv2.DestroyAllWindows();
-
-            //File.AppendAllText(logPath, "\nDetection completed.");
-           // MessageBox.Show($"Detection log saved to:\n{logPath}");
-        }
-
-        //4 - Preprocessing Verification: shows original vs preprocessed face side-by-side
-        public void CheckPreprocessing(string imagePath)
-        {
-            using (var image = new Mat(imagePath))
-            {
-                var faceRect = DetectFace(image);
-                if (faceRect.HasValue)
-                {
-                    using (var processed = PreprocessFace(image, faceRect.Value))
-                    {
-                        // Original face
-                        using (var face = new Mat(image, faceRect.Value))
-                        {
-                            Cv2.ImShow("Original Face", face);
-                        }
-
-                        // Processed face
-                        Cv2.ImShow("Processed Face", processed);
-                        Cv2.WaitKey(0);
-                    }
-                }
-            }
-            Cv2.DestroyAllWindows();
-        }
-
-        //3- Load the good dataSet:
-        public void LoadDataset(string datasetPath)
-        {
-            _labelMap.Clear();
-            _trainingImages.Clear();
-            _trainingLabels.Clear();
+            _faceEmbeddings.Clear();
 
             if (!Directory.Exists(datasetPath))
             {
-                MessageBox.Show($"Dataset directory not found: {datasetPath}");
+                MessageBox.Show($"Dataset directory not found:{datasetPath}");
+                Debug.WriteLine("==============================");
+                Debug.WriteLine("=Dataset directory not found==");
                 return;
             }
-
-            var personFolders = Directory.GetDirectories(datasetPath)
-                                       .OrderBy(f => f);
+            
+            var personFolders = Directory.GetDirectories(datasetPath).OrderBy(f => f);
 
             foreach (var folder in personFolders)
             {
                 string folderName = Path.GetFileName(folder);
-                if (!int.TryParse(folderName.Replace("Person", ""), out int personIndex))
+                // Parse the person's ID from the folder name (e.g., "Person1")
+                if (!int.TryParse(folderName.Replace("Person", ""), out int personId))
                 {
                     Debug.WriteLine($"Skipping invalid folder: {folder}");
                     continue;
                 }
 
-                _labelMap[personIndex] = $"Person{personIndex}";
-                int addedSamples = 0;
+                Debug.WriteLine($"Valid Folder: {folder} with folderName: {folderName} with ID: {personId}");
 
+                _labelMap[personId] = folderName; // e.g., 1 -> "Person1"
+                var embeddingsForPerson = new List<float[]>();
+                
+                // int count = 0;
                 foreach (var file in Directory.GetFiles(folder))
                 {
-                    if (!IsImageFile(file)) continue;
+                    //Debug.WriteLine($"{count} - Got the file: {file} from folder: {folder}...");
+                    //count++;
+                    
+                    //if (!IsImageFile(file)) continue;
 
                     try
                     {
                         using (var image = new Mat(file))
                         {
-                            if (image.Empty())
+                            if (image.Empty()) continue;
+                            Debug.WriteLine("==============================");
+                            Debug.WriteLine("=...PreprocessForFaceNet!==");
+                            // need process the image to the input that onnx expects - RGB, size(160,160),and normalidez pixels
+                            using (var processedFace = PreprocessForFaceNet(image))//preprocess takes the image input - outputs 
                             {
-                                Debug.WriteLine($"Invalid/corrupt image: {file}");
-                                continue;//skip to next file
+                                if (processedFace != null)
+                                {
+                                    Debug.WriteLine($"processedFace is not null in file: {file}");
+                                    float[] embedding = GetFaceEmbedding(processedFace);
+                                    embeddingsForPerson.Add(embedding);
+                                }
+                                else
+                                {
+                                    Debug.WriteLine($"Error in adding the preprocessedFace in {file}");
+                                }
                             }
-                            // 1. Detect face
-                            var faceRect = DetectFace(image);//null or cropped images with a face in it
-                            if (!faceRect.HasValue)
-                            {
-                                Debug.WriteLine($"No face detected in: {file}");
-                                continue;
-                            }
-
-                            // 2. Preprocess face
-                            Mat processedFace = PreprocessFace(image, faceRect.Value);
-                            _trainingImages.Add(processedFace);
-                            _trainingLabels.Add(personIndex);
-                            addedSamples++;
                         }
                     }
                     catch (Exception ex)
@@ -317,52 +113,187 @@ namespace EmployeeAttendanceSystem
                         Debug.WriteLine($"Error processing {file}: {ex.Message}");
                     }
                 }
-                if(addedSamples < 5)
+
+                if (embeddingsForPerson.Count > 0)
                 {
-                    Debug.WriteLine($"Warning: Person {personIndex} has only {addedSamples} valid images");
+                    _faceEmbeddings[personId] = embeddingsForPerson;
                 }
             }
         }
-
-
-        //Train the Model
-        public void TrainRecognizer()
+        
+        private Mat PreprocessForFaceNet(Mat image)
         {
-            if (_trainingImages.Count == 0)
-                throw new InvalidOperationException("No training data loaded");
+            Mat rgb = new Mat();
+            Cv2.CvtColor(image, rgb, ColorConversionCodes.BGR2RGB);
 
-            _recognizer.Update(_trainingImages.ToArray(), _trainingLabels.ToArray());
+            //FaceNet expects (e.g., 160x160)
+            Mat resized = new Mat();
+            Cv2.Resize(rgb, resized, new OpenCvSharp.Size(160, 160));
+
+            // 3. Convert pixel values [0, 255]- ([-1, 1] or [0, 1])
+            Mat normalized = new Mat();
+            // Example: Normalize to [-1, 1]. Check your specific model's requirements.
+            //how do I know that I converted to the right format?
+            resized.ConvertTo(normalized, MatType.CV_32FC3, 2.0 / 255.0, -1.0);
+
+            return normalized.Clone(); // Return a clone to avoid disposal issues
         }
 
+        //Get the face embedding from the ONNX model
+        private float[] GetFaceEmbedding(Mat processedFace)
+        {
+            Debug.WriteLine($"=== GetFaceEmbedding Called ===");
+            Debug.WriteLine($"Session is null: {_session == null}");
+            Debug.WriteLine($"Session is disposed: {_isDisposed}");
+
+            if (_session == null || _isDisposed)
+            {
+                throw new InvalidOperationException("ONNX session is not available");
+            }
+
+            // Print available input names
+            Debug.WriteLine("Available input names:");
+            foreach (var name in _session.InputMetadata.Keys)
+            {
+                Debug.WriteLine($"  - {name}");
+            }
+
+            // Convert the OpenCV Mat to a tensor for ONNX Runtime
+            var inputTensor = ConvertMatToTensor(processedFace);
+            string inputName = _session.InputMetadata.Keys.First();
+
+            // Create the model input. The input name must match your model.
+            var inputs = new List<NamedOnnxValue>
+            {
+                NamedOnnxValue.CreateFromTensor(inputName, inputTensor)
+            };
+
+            // Run inference
+            using (var results = _session.Run(inputs))
+            {
+                // Get the first output
+                string outputName = _session.OutputMetadata.Keys.First();
+                var embeddingTensor = results.FirstOrDefault(r => r.Name == outputName)?.AsTensor<float>();
+
+                if (embeddingTensor == null)
+                {
+                    throw new InvalidOperationException($"Could not find output '{outputName}' in model results");
+                }
+
+                return embeddingTensor.ToArray();
+            }
+        }
+
+        // Converts OpenCV Mat -> ONNX Runtime Tensor - CORRECTED VERSION
+        private DenseTensor<float> ConvertMatToTensor(Mat image)
+        {
+
+            Debug.WriteLine($"Image dimensions: {image.Rows}x{image.Cols}");
+            Debug.WriteLine($"Image channels: {image.Channels()}");
+            Debug.WriteLine($"Image type: {image.Type()}");
+            var tensor = new DenseTensor<float>(new[] { 1, 160, 160, 3 });
+
+            if (image.Rows != 160 || image.Cols != 160)
+            {
+                throw new ArgumentException("Input image must be 160x160 pixels.");
+            }
+
+            if (image.Channels() != 3)
+            {
+                throw new ArgumentException("Input image must have 3 channels (RGB).");
+            }
+
+            // Get the indexer for Vec3f
+            var indexer = image.GetGenericIndexer<Vec3f>();
+
+            // Copy data to tensor with correct channel ordering
+            for (int y = 0; y < 160; y++)
+            {
+                for (int x = 0; x < 160; x++)
+                {
+                    var pixel = indexer[y, x];
+                    tensor[0, y, x, 0] = pixel.Item0; // R
+                    tensor[0, y, x, 1] = pixel.Item1; // G  
+                    tensor[0, y, x, 2] = pixel.Item2; // B
+                }
+            }
+            return tensor;
+        }
+
+        //MAKE PREDICTIONS:
         public (string Name, double Confidence) Recognize(Mat inputImage)
         {
-            // 1. Detect face
-            var faceRect = DetectFace(inputImage);
-            if (faceRect == null)
+            
+            using (var processedFace = PreprocessForFaceNet(inputImage))
             {
-                return ("No Face Detected", 0);
-            }
+                if (processedFace == null)
+                {
+                    return ("Invalid or no face found", 0.0);
+                }
 
-            // 2. Preprocess the face
-            using (var processedFace = PreprocessFace(inputImage, faceRect.Value))
-            {
-                // 3. Recognize the face
-                //predict method returns
-                //1 - label: predicted persons ID
-                //2- Confidence: distance metric (lower + better match)
-                _recognizer.Predict(processedFace, out int label, out double confidence);
                 
+                float[] queryEmbedding = GetFaceEmbedding(processedFace);
 
-                // 4. Return results (lower confidence = better match)
-                if (confidence > 70) // Threshold can be adjusted
-                    return ("Unknown", confidence);
-
-                return _labelMap.TryGetValue(label, out string name)
-                    ? (name, confidence)
-                    : ("Unknown", confidence);
+                // 3. Find the best match in the database
+                return FindBestMatch(queryEmbedding);
             }
         }
+        // **Finds the closest matching embedding in the database**
+        private (string Name, double Confidence) FindBestMatch(float[] queryEmbedding)
+        {
+            double bestDistance = double.MaxValue;
+            int bestMatchId = -1;
 
+            foreach (var personData in _faceEmbeddings)
+            {
+                foreach (var storedEmbedding in personData.Value)
+                {
+                    // Calculate the distance (dissimilarity) between embeddings
+                    double distance = CosineDistance(queryEmbedding, storedEmbedding);
+
+                    // A smaller distance means a better match
+                    if (distance < bestDistance)
+                    {
+                        bestDistance = distance;
+                        bestMatchId = personData.Key;
+                    }
+                }
+            }
+
+            // 4. Convert distance to a confidence percentage and apply a threshold
+            double confidence = Math.Max(0, 100 - bestDistance * 100);
+
+            // You need to define a threshold. If the best match isn't good enough, return "Unknown".
+            if (confidence < 60) // Adjust this threshold based on testing
+            {
+                return ("Unknown", confidence);
+            }
+
+            return (_labelMap[bestMatchId], confidence);
+        }
+
+        private double CosineDistance(float[] v1, float[] v2)
+        {
+            double dot = 0.0;
+            double mag1 = 0.0;
+            double mag2 = 0.0;
+
+            for (int i = 0; i < v1.Length; i++)
+            {
+                dot += v1[i] * v2[i];
+                mag1 += v1[i] * v1[i];
+                mag2 += v2[i] * v2[i];
+            }
+
+            // Cosine Similarity = dot / (sqrt(mag1) * sqrt(mag2))
+            // Cosine Distance = 1 - Cosine Similarity
+            return 1.0 - (dot / (Math.Sqrt(mag1) * Math.Sqrt(mag2)));
+        }
+
+        public bool HasEmbeddings()
+        {
+            return _faceEmbeddings != null && _faceEmbeddings.Count > 0;
+        }
 
         private bool IsImageFile(string path)
         {
@@ -370,14 +301,11 @@ namespace EmployeeAttendanceSystem
             return ext == ".jpg" || ext == ".jpeg";
         }
 
-
         // 5. Cleanup
         public void Dispose()
         {
             if (_isDisposed) return;
-            _recognizer?.Dispose();
-            _faceCascade?.Dispose();
-            _trainingImages.ForEach(m => m?.Dispose());
+            _session?.Dispose();
             _isDisposed = true;
         }
     }

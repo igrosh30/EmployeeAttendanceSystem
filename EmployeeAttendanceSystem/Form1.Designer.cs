@@ -32,10 +32,7 @@
             labelUpload = new Label();
             buttonUpload = new Button();
             openFileDialog1 = new OpenFileDialog();
-            buttonRecognizer = new Button();
             buttonTrain = new Button();
-            buttonTestDataset = new Button();
-            buttonTestPreprocess = new Button();
             ((System.ComponentModel.ISupportInitialize)pictureBox1).BeginInit();
             SuspendLayout();
             // 
@@ -45,7 +42,7 @@
             pictureBox1.BorderStyle = BorderStyle.FixedSingle;
             pictureBox1.Location = new Point(124, 120);
             pictureBox1.Name = "pictureBox1";
-            pictureBox1.Size = new Size(825, 452);
+            pictureBox1.Size = new Size(664, 257);
             pictureBox1.TabIndex = 3;
             pictureBox1.TabStop = false;
             // 
@@ -73,20 +70,9 @@
             // 
             openFileDialog1.FileName = "openFileDialog1";
             // 
-            // buttonRecognizer
-            // 
-            buttonRecognizer.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            buttonRecognizer.Location = new Point(595, 609);
-            buttonRecognizer.Name = "buttonRecognizer";
-            buttonRecognizer.Size = new Size(354, 42);
-            buttonRecognizer.TabIndex = 8;
-            buttonRecognizer.Text = "Recognize";
-            buttonRecognizer.UseVisualStyleBackColor = true;
-            buttonRecognizer.Click += buttonRecognizer_Click;
-            // 
             // buttonTrain
             // 
-            buttonTrain.Location = new Point(185, 628);
+            buttonTrain.Location = new Point(320, 406);
             buttonTrain.Name = "buttonTrain";
             buttonTrain.Size = new Size(171, 23);
             buttonTrain.TabIndex = 9;
@@ -94,35 +80,12 @@
             buttonTrain.UseVisualStyleBackColor = true;
             buttonTrain.Click += buttonTrain_Click;
             // 
-            // buttonTestDataset
-            // 
-            buttonTestDataset.Location = new Point(516, 46);
-            buttonTestDataset.Name = "buttonTestDataset";
-            buttonTestDataset.Size = new Size(124, 58);
-            buttonTestDataset.TabIndex = 10;
-            buttonTestDataset.Text = "Detect Faces in DataSet";
-            buttonTestDataset.UseVisualStyleBackColor = true;
-            buttonTestDataset.Click += buttonTestDataset_Click;
-            // 
-            // buttonTestPreprocess
-            // 
-            buttonTestPreprocess.Location = new Point(790, 46);
-            buttonTestPreprocess.Name = "buttonTestPreprocess";
-            buttonTestPreprocess.Size = new Size(145, 49);
-            buttonTestPreprocess.TabIndex = 11;
-            buttonTestPreprocess.Text = "Test Preprocessing Images";
-            buttonTestPreprocess.UseVisualStyleBackColor = true;
-            buttonTestPreprocess.Click += buttonTestPreprocess_Click;
-            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(1039, 728);
-            Controls.Add(buttonTestPreprocess);
-            Controls.Add(buttonTestDataset);
+            ClientSize = new Size(878, 533);
             Controls.Add(buttonTrain);
-            Controls.Add(buttonRecognizer);
             Controls.Add(buttonUpload);
             Controls.Add(labelUpload);
             Controls.Add(pictureBox1);
@@ -139,9 +102,6 @@
         private Label labelUpload;
         private Button buttonUpload;
         private OpenFileDialog openFileDialog1;
-        private Button buttonRecognizer;
         private Button buttonTrain;
-        private Button buttonTestDataset;
-        private Button buttonTestPreprocess;
     }
 }

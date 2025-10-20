@@ -1,10 +1,13 @@
 ﻿using OpenCvSharp;
 using OpenCvSharp.Extensions;
-using System;
-using System.Drawing;
-using System.Windows.Forms;
-using System.IO;
-using System.Diagnostics;
+
+/*
+ Person0 - Courtous
+ Person1 - Dybala
+ Person2 - Kross
+ Person3 - Pogba
+ */
+
 
 namespace EmployeeAttendanceSystem
 {
@@ -12,7 +15,8 @@ namespace EmployeeAttendanceSystem
     {
         private Mat latestFrame;
         private FaceRecognitionService _faceService;
-        private const string ModelPath = "face_model.yml";
+        private const string dataSetPath = "C:\\Users\\Igor\\source\\repos\\EmployeeAttendanceSystem\\EmployeeAttendanceSystem\\FacesDataset";
+        private const string modelPath = @"C:\Users\Igor\source\repos\EmployeeAttendanceSystem\EmployeeAttendanceSystem\Models\faceNet.onnx";
         private string selectedImagePath;
 
         public Form1()
@@ -23,20 +27,29 @@ namespace EmployeeAttendanceSystem
 
         private void InitializeFaceRecognitionService()
         {
-            _faceService = new FaceRecognitionService();
-
-            string modelPath = Path.Combine(Application.StartupPath, ModelPath);
-            MessageBox.Show($"Model will be saved to:\n{modelPath}\n\n" +
-                         $"Current directory:\n{Environment.CurrentDirectory}");
-
-            if (!_faceService.LoadModel(ModelPath))
+            //initialize the model&dataset
+            try
             {
-                buttonTrain.Enabled = true;
-                labelUpload.Text = "No trained model found. Please train first.";
+                if (!File.Exists(modelPath))
+                {
+                    MessageBox.Show($"Model file not found at:\n{modelPath}\n\nPlease check the file path.",
+                                  "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                _faceService = new FaceRecognitionService(modelPath);
+
+                // Load your dataset
+                if (!Directory.Exists(dataSetPath))
+                {
+                    MessageBox.Show($"Dataset directory not found:\n{dataSetPath}",
+                                  "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                labelUpload.Text = "Pretrained model loaded successfully.";
+                MessageBox.Show($"Error initializing face recognition: {ex.Message}",
+                              "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -46,6 +59,7 @@ namespace EmployeeAttendanceSystem
             _faceService?.Dispose();
         }
 
+        
         private void buttonUpload_Click(object sender, EventArgs e)
         {
             openFileDialog1.Filter = "Image Files (*.jpg;*.jpeg;*.png;*.bmp)|*.jpg;*.jpeg;*.png;*.bmp";
@@ -53,95 +67,61 @@ namespace EmployeeAttendanceSystem
             {
                 try
                 {
+                    if (_faceService == null)
+                    {
+                        MessageBox.Show("Face Recognition service is not initialized");
+                        return;
+                    }
                     selectedImagePath = openFileDialog1.FileName;
                     pictureBox1.Image?.Dispose();
                     latestFrame?.Dispose();
 
                     pictureBox1.Image = new Bitmap(selectedImagePath);
                     latestFrame = BitmapConverter.ToMat((Bitmap)pictureBox1.Image);
-                    buttonRecognizer.Enabled = true;
+                    
+                    if(!_faceService.HasEmbeddings())
+                    {
+                        MessageBox.Show("No face embeddings found. Please train the model first.");
+                        return;
+                    }
 
-                    labelUpload.Text = "Image loaded successfully. Click Recognize.";
+                    labelUpload.Text = "Image loaded successfully. Strarting the Recognition Process.";
+                    
+                    var (predictedName, predictedConfidence) = _faceService.Recognize(latestFrame);
+                    
+                    MessageBox.Show($"Person recognized: {predictedName}\nConfidence: {predictedConfidence:F2}%",
+                             "Recognition Result",
+                             MessageBoxButtons.OK,
+                             MessageBoxIcon.Information);
                 }
                 catch (Exception ex)
                 {
                     MessageBox.Show($"Error loading image: {ex.Message}");
-                    buttonRecognizer.Enabled = false;
                     labelUpload.Text = "Error loading image.";
                 }
             }
+            
         }
 
-        private void buttonRecognizer_Click(object sender, EventArgs e)
-        {
-            if (latestFrame == null || latestFrame.Empty() )
-            {
-                MessageBox.Show("Please upload an image first!");
-                return;
-            }
-
-            try
-            {
-                var (name, confidence) = _faceService.Recognize(latestFrame);
-                double displayConfidence = Math.Max(0, 100 - confidence);
-
-                MessageBox.Show($"Recognized: {name}\nConfidence: {displayConfidence:F1}%");
-                labelUpload.Text = $"Recognized: {name} (Confidence: {displayConfidence:F1}%)";
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Recognition failed: {ex.Message}");
-                labelUpload.Text = "Recognition error occurred.";
-            }
-        }
-
+        
         private void buttonTrain_Click(object sender, EventArgs e)
         {
-            buttonTrain.Enabled = false;//once you trainned you cannot train again
-            labelUpload.Text = "Testing dataset...";
+            buttonTrain.Enabled = false;
+            labelUpload.Text = "Creating the embeedings...";
+            
+            _faceService.RegisterFacesFromDataset(dataSetPath);
+
             Application.DoEvents(); // Force UI update
-
-            try
+            if (_faceService.HasEmbeddings())
             {
-                string datasetPath = Path.Combine(Application.StartupPath, "FacesDataset");
-                //when I call this method it doesnt do much right?! I can erase this...
-                _faceService.TestDetectionOnDataset(datasetPath);
-
-                //here I load my dataset
-                labelUpload.Text = "Loading dataset...";
-                Application.DoEvents();
-                _faceService.LoadDataset(datasetPath);
-
-                labelUpload.Text = "Training model...";
-                Application.DoEvents();
-                _faceService.TrainRecognizer();
-
-                labelUpload.Text = "Saving model...";
-                Application.DoEvents();
-                _faceService.SaveModel(ModelPath);
-
-                labelUpload.Text = "Training complete!";
-            }
-            finally
-            {
-                buttonTrain.Enabled = true;
-            }
-        }
-
-        // Add this method to test preprocessing on demand
-        private void TestPreprocessing()
-        {
-            if (latestFrame != null)
-            {
-                string tempPath = Path.Combine(Path.GetTempPath(), "test_image.jpg");
-                latestFrame.ImWrite(tempPath);
-                _faceService.CheckPreprocessing(tempPath);
-                File.Delete(tempPath);
+                labelUpload.Text = "Embeedings done";
             }
             else
             {
-                MessageBox.Show("Please upload an image first!");
+                labelUpload.Text = "Failed Creating the Embeedings";
             }
+            
+            
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -149,47 +129,7 @@ namespace EmployeeAttendanceSystem
             
         }
 
-        private void buttonTestDataset_Click(object sender, EventArgs e)
-        {
-            string datasetPath = Path.Combine(Application.StartupPath, "FacesDataset");
-            if (!Directory.Exists(datasetPath))
-            {
-                MessageBox.Show($"Dataset folder not found at:\n{datasetPath}");
-                return;
-            }
-
-            try
-            {
-                Cursor = Cursors.WaitCursor;
-                _faceService.TestDetectionOnDataset(datasetPath);
-                MessageBox.Show($"Dataset test completed.\nCheck debug output for details.");
-            }
-            finally
-            {
-                Cursor = Cursors.Default;
-            }
-        }
-
-        private void buttonTestPreprocess_Click(object sender, EventArgs e)
-        {
-            if (latestFrame == null)
-            {
-                MessageBox.Show("Please upload an image first!");
-                return;
-            }
-
-            try
-            {
-                string tempPath = Path.GetTempFileName();
-                latestFrame.ImWrite(tempPath);
-                _faceService.CheckPreprocessing(tempPath);
-                File.Delete(tempPath);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Preprocessing test failed:\n{ex.Message}");
-            }
-        }
+ 
 
     }
 }
