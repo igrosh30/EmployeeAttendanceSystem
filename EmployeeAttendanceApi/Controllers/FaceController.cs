@@ -38,18 +38,27 @@ namespace EmployeeAttendanceApi.Controllers
         [HttpPost("recognize")]
         public async Task<IActionResult> Recognize(IFormFile file)
         {
-            if (file == null)
-                return BadRequest("Please upload a photo.");
+            if (file == null) return BadRequest("Please upload a photo.");
+            
+            byte[] originalImageBytes;
+            using (var memoryStream = new MemoryStream())
+            {
+                await file.CopyToAsync(memoryStream);
+                originalImageBytes = memoryStream.ToArray();   // ← 100% original JPEG/PNG from user
+            }
 
-            // Convert file → OpenCV image
-            using var stream = new MemoryStream();
-            await file.CopyToAsync(stream);
-            using var image = Cv2.ImDecode(stream.ToArray(), ImreadModes.Color);
+            using var image = Cv2.ImDecode(originalImageBytes, ImreadModes.Color);
+            if (image.Empty()) return BadRequest("Invalid photo.");
 
-            if (image.Empty())
-                return BadRequest("Invalid photo.");
-
+            double confidenceThreshold = 60.0;
             var (name, confidence) = await _svc.RecognizeAsync(image);
+
+            bool isRecognize = confidence >= confidenceThreshold && !string.IsNullOrEmpty(name);
+            if(isRecognize)
+            {
+                _svc.SaveImage2Folder(name, originalImageBytes);
+            }
+            //should I save here? or inside the RecognizeAsync?
             return Ok(new { name, confidence });
         }
     }

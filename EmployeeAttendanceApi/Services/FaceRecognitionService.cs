@@ -95,6 +95,27 @@ namespace EmployeeAttendanceApi.Services
         }
 
         // -------------------------------------------------------------
+        // 3. Save image to folder(e.g., dataBase)
+        // -------------------------------------------------------------
+        public async Task SaveImage2Folder(string label, byte[] imageBytes)
+        {
+
+            string rootFolder = "FacesDataset";
+            string personFolder = Path.Combine(rootFolder, label);
+
+            Directory.CreateDirectory(personFolder);
+
+            // Unique filename 
+            string fileName = $"{DateTime.Now:yyyyMMdd_HHmmssfff}_{Guid.NewGuid():N.Substring(0, 8)}.jpg";
+            string fullPath = Path.Combine(personFolder, fileName);
+
+            await File.WriteAllBytesAsync(fullPath, imageBytes);
+
+            //Console.WriteLine($"[Dataset Improved] Saved new photo for {label} → {fileName}");
+        }
+
+
+        // -------------------------------------------------------------
         // Helper methods (unchanged, only minor logging)
         // -------------------------------------------------------------
         private Mat Preprocess(Mat src)
